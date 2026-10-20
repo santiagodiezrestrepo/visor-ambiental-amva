@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visor Ambiental AMVA</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{--bg:#0f1720;--panel:#16212cee;--fg:#e6edf3;--muted:#9fb0c0;--acc:#3fb68b;--line:#2a3a4a}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.4 system-ui,Segoe UI,Roboto,sans-serif}
+  #map{position:absolute;inset:0}
+  #panel{position:absolute;top:10px;left:10px;width:310px;max-height:calc(100% - 20px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;backdrop-filter:blur(6px);z-index:2}
+  h1{font-size:16px;margin:0 0 2px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--acc);margin:14px 0 6px;border-top:1px solid var(--line);padding-top:10px}
+  .sub{color:var(--muted);font-size:11px}
+  label{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer}
+  input[type=range]{width:100%}
+  .row{display:flex;gap:6px;align-items:center}
+  .row>*{flex:1}
+  select,input[type=date],button,textarea,input[type=text]{background:#0d151d;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit}
+  button{cursor:pointer}button:hover{border-color:var(--acc)}
+  .dot{width:12px;height:12px;border-radius:50%;display:inline-block;flex:none;border:1px solid #0006}
+  .cnt{margin-left:auto;color:var(--muted);font-size:11px}
+  #legend{position:absolute;right:10px;bottom:30px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;z-index:2;min-width:180px;display:none}
+  .ramp{height:10px;border-radius:3px;margin:4px 0 2px}
+  #toggle{display:none;position:absolute;top:10px;left:10px;z-index:3}
+  .maplibregl-popup-content{background:#16212c;color:var(--fg);border-radius:8px}
+  .maplibregl-popup-tip{border-top-color:#16212c!important}
+  #form{display:none;margin-top:6px}
+  #form textarea{width:100%;height:50px}
+  #status{color:var(--muted);font-size:11px;margin-top:4px}
+  @media (max-width:600px){#panel{width:calc(100% - 20px);max-height:55%}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>Visor Ambiental · Valle de Aburrá</h1>
+  <div class="sub">Área Metropolitana de Medellín · relieve 3D, imágenes satelitales, hidrología y denuncias</div>
+
+  <h2>Relieve 3D</h2>
+  <label><input type="checkbox" id="terrain" checked> Superficie de terreno (DEM)</label>
+  <div class="row"><span style="flex:0 0 90px">Exageración</span><input type="range" id="exag" min="1" max="4" step="0.1" value="1.6"><span id="exagv" style="flex:0 0 30px">1.6×</span></div>
+  <label><input type="checkbox" id="hill" checked> Sombreado (hillshade)</label>
+  <label><input type="checkbox" id="contours"> Curvas de nivel (100 m)</label>
+  <div class="row"><button id="v3d">Vista 3D</button><button id="v2d">Vista cenital</button><button id="spin">Rotar</button></div>
+
+  <h2>Mapa base</h2>
+  <select id="base" style="width:100%">
+    <option value="esri">Esri World Imagery (alta resolución)</option>
+    <option value="s2">Sentinel-2 cloudless 2021 (EOX, 10 m)</option>
+    <option value="osm">OpenStreetMap</option>
+  </select>
+
+  <h2>Imágenes ambientales / índices</h2>
+  <div class="row"><span style="flex:0 0 50px">Fecha</span><input type="date" id="date"></div>
+  <select id="index" style="width:100%;margin-top:6px">
+    <option value="">— Ninguna —</option>
+    <option value="ndvi">NDVI 8 días (MODIS Terra, 250 m)</option>
+    <option value="evi">EVI 8 días (MODIS Terra, 250 m)</option>
+    <option value="lst">Temperatura superficial diurna (MODIS, 1 km)</option>
+    <option value="lstn">Temperatura superficial nocturna (MODIS, 1 km)</option>
+    <option value="aod">Aerosoles – AOD (MODIS combinado)</option>
+    <option value="no2">NO₂ troposférico (OMI)</option>
+    <option value="viirs">Color verdadero diario (VIIRS)</option>
+  </select>
+  <div class="row" style="margin-top:6px"><span style="flex:0 0 70px">Opacidad</span><input type="range" id="op" min="0" max="1" step="0.05" value="0.7"></div>
+  <div class="sub">Fuente: NASA GIBS (WMTS). Los compuestos de 8 días pueden tardar en publicarse; si no aparece nada, retrocede la fecha.</div>
+
+  <h2>Cobertura vegetal · Sentinel-2 / Landsat</h2>
+  <div class="row"><select id="spSrc"><option value="s2">Sentinel-2 (10 m, reciente)</option><option value="ls">Landsat (30 m, histórico)</option></select></div>
+  <select id="spFn" style="width:100%;margin-top:6px"></select>
+  <div class="row" id="lsYearRow" style="margin-top:6px;display:none"><span style="flex:0 0 90px">Año Landsat</span><input type="range" id="lsYear" min="1985" max="2025" step="1" value="2015"><span id="lsYearV" style="flex:0 0 36px">2015</span></div>
+  <div class="row" style="margin-top:6px"><span style="flex:0 0 70px">Opacidad</span><input type="range" id="spOp" min="0" max="1" step="0.05" value="0.85"></div>
+  <div class="sub" id="spHelp"></div>
+
+  <h2>Deforestación (Hansen / GFW)</h2>
+  <label><input type="checkbox" id="tree2000"> Cobertura arbórea año 2000</label>
+  <label><input type="checkbox" id="loss"> Pérdida de bosque 2001–2023</label>
+  <label><input type="checkbox" id="gain"> Ganancia de bosque 2000–2012</label>
+  <div class="sub">Hansen et al., Univ. Maryland / Google (Landsat 30 m). Rojo = pérdida, verde = cobertura, azul = ganancia.</div>
+
+  <h2>Hidrología</h2>
+  <label><input type="checkbox" id="rivers" checked> Ríos y quebradas (OSM)</label>
+  <label><input type="checkbox" id="water" checked> Cuerpos de agua / embalses</label>
+  <div id="status">Cargando hidrología…</div>
+
+  <h2>Denuncias ambientales</h2>
+  <div id="cats"></div>
+  <div class="row" style="margin-top:6px"><button id="all">Todas</button><button id="none">Ninguna</button></div>
+  <div class="row" style="margin-top:6px"><button id="add">＋ Nueva denuncia (clic en mapa)</button></div>
+  <div id="form">
+    <select id="fcat" style="width:100%"></select>
+    <textarea id="fdesc" placeholder="Descripción…" style="margin-top:4px"></textarea>
+    <div class="row"><button id="fsave">Guardar</button><button id="fcancel">Cancelar</button></div>
+  </div>
+  <div class="sub" style="margin-top:6px">Las denuncias precargadas son <b>datos de ejemplo</b> para demostración. Las nuevas se guardan en este navegador.</div>
+</div>
+<div id="legend"></div>
+
+<script>
+const CATS = {
+  basuras:     {n:'Basuras / residuos',        c:'#a0522d'},
+  quema:       {n:'Quema de basuras',          c:'#ff5722'},
+  tala:        {n:'Tala de árboles',           c:'#2e7d32'},
+  gases:       {n:'Contaminación por gases',   c:'#9c27b0'},
+  pm:          {n:'Material particulado',      c:'#607d8b'},
+  olores:      {n:'Malos olores',              c:'#cddc39'},
+  acueducto:   {n:'Acueducto / alcantarillado',c:'#1e88e5'},
+  ruido:       {n:'Ruido',                     c:'#ffc107'},
+  vertimiento: {n:'Vertimientos a quebradas',  c:'#00acc1'},
+  fauna:       {n:'Afectación a fauna',        c:'#e91e63'},
+};
+
+// Datos de ejemplo (ficticios) distribuidos en el Valle de Aburrá
+const SAMPLE = [
+ ['basuras',-75.5705,6.2518,'Medellín – La Candelaria','Acumulación de residuos en vía pública'],
+ ['basuras',-75.5480,6.2900,'Medellín – Manrique','Botadero a cielo abierto en ladera'],
+ ['basuras',-75.6010,6.2290,'Medellín – Belén','Escombros en zona verde'],
+ ['quema',-75.5390,6.2760,'Medellín – Villa Hermosa','Quema de residuos en lote'],
+ ['quema',-75.6250,6.3330,'Bello – Paris','Quema de llantas nocturna'],
+ ['quema',-75.6190,6.1630,'La Estrella','Quema de cobertura vegetal'],
+ ['tala',-75.5630,6.2030,'Medellín – El Poblado','Tala sin permiso en retiro de quebrada'],
+ ['tala',-75.5820,6.1620,'Envigado – Las Palmas','Tala en área de reserva'],
+ ['tala',-75.6630,6.2560,'Medellín – San Cristóbal','Deforestación por loteo'],
+ ['gases',-75.5900,6.1790,'Itagüí – zona industrial','Emisiones de chimenea industrial'],
+ ['gases',-75.5740,6.2330,'Medellín – Guayabal','Emisiones vehiculares en corredor'],
+ ['gases',-75.5550,6.3360,'Bello – Niquía','Emisiones de fundición'],
+ ['pm',-75.5765,6.2440,'Medellín – Centro','Alta concentración PM2.5'],
+ ['pm',-75.5960,6.1500,'Sabaneta','Polvo de obra de construcción'],
+ ['pm',-75.5640,6.1050,'Caldas','Material particulado de canteras'],
+ ['olores',-75.5810,6.2830,'Medellín – Moravia','Olores de antiguo relleno'],
+ ['olores',-75.5550,6.3530,'Bello – PTAR Aguas Claras','Olores ofensivos de planta'],
+ ['olores',-75.6080,6.1880,'Itagüí','Olores de procesadora de alimentos'],
+ ['acueducto',-75.5600,6.3050,'Medellín – Popular','Fuga de acueducto'],
+ ['acueducto',-75.6380,6.3460,'Bello – Fontidueño','Desbordamiento de alcantarillado'],
+ ['acueducto',-75.5870,6.0950,'Caldas – centro','Suspensión prolongada del servicio'],
+ ['ruido',-75.5680,6.2090,'Medellín – Provenza','Ruido de establecimientos'],
+ ['vertimiento',-75.5800,6.2700,'Río Medellín – Aranjuez','Vertimiento directo al río'],
+ ['vertimiento',-75.5530,6.2320,'Quebrada Santa Elena','Vertimiento de aguas residuales'],
+ ['vertimiento',-75.5320,6.3800,'Copacabana','Vertimiento industrial'],
+ ['fauna',-75.5150,6.2600,'Parque Arví (borde)','Caza de fauna silvestre'],
+ ['fauna',-75.4780,6.4490,'Girardota','Afectación de hábitat'],
+ ['basuras',-75.4440,6.4800,'Barbosa','Residuos en orilla del río'],
+];
+
+const LS_KEY='amva_denuncias_v1';
+function loadUser(){try{return JSON.parse(localStorage.getItem(LS_KEY))||[]}catch(e){return []}}
+function saveUser(a){try{localStorage.setItem(LS_KEY,JSON.stringify(a))}catch(e){}}
+let userPts = loadUser();
+
+function complaintsGeoJSON(){
+  const f = SAMPLE.map((s,i)=>({type:'Feature',geometry:{type:'Point',coordinates:[s[1],s[2]]},
+    properties:{id:'s'+i,cat:s[0],lugar:s[3],desc:s[4],fuente:'Ejemplo'}}));
+  userPts.forEach(u=>f.push({type:'Feature',geometry:{type:'Point',coordinates:u.coord},
+    properties:{id:u.id,cat:u.cat,lugar:'Reportada por usuario',desc:u.desc,fuente:'Usuario · '+u.fecha}}));
+  return {type:'FeatureCollection',features:f};
+}
+
+// --- Capas GIBS ---
+const GIBS = {
+  ndvi:{l:'MODIS_Terra_NDVI_8Day',m:'GoogleMapsCompatible_Level9',z:9,leg:['NDVI','linear-gradient(90deg,#a5713b,#f3e7a5,#8fc95c,#1b6b1b,#003300)','-0.1','0.5','1']},
+  evi:{l:'MODIS_Terra_EVI_8Day',m:'GoogleMapsCompatible_Level9',z:9,leg:['EVI','linear-gradient(90deg,#a5713b,#f3e7a5,#8fc95c,#1b6b1b,#003300)','-0.1','0.5','1']},
+  lst:{l:'MODIS_Terra_Land_Surface_Temp_Day',m:'GoogleMapsCompatible_Level7',z:7,leg:['LST día (K)','linear-gradient(90deg,#2c0050,#3b4cc0,#7fd3e0,#f5e663,#e8562a,#7a0000)','200','275','350']},
+  lstn:{l:'MODIS_Terra_Land_Surface_Temp_Night',m:'GoogleMapsCompatible_Level7',z:7,leg:['LST noche (K)','linear-gradient(90deg,#2c0050,#3b4cc0,#7fd3e0,#f5e663,#e8562a,#7a0000)','200','275','350']},
+  aod:{l:'MODIS_Combined_Value_Added_AOD',m:'GoogleMapsCompatible_Level6',z:6,leg:['AOD 550 nm','linear-gradient(90deg,#fffbd0,#fec45a,#f1601c,#a8001f,#3d0011)','0','0.5','1+']},
+  no2:{l:'OMI_Nitrogen_Dioxide_Tropo_Column',m:'GoogleMapsCompatible_Level6',z:6,leg:['NO₂ trop.','linear-gradient(90deg,#fff7ec,#fdbb84,#ef6548,#990000)','bajo','','alto']},
+  viirs:{l:'VIIRS_SNPP_CorrectedReflectance_TrueColor',m:'GoogleMapsCompatible_Level9',z:9,ext:'jpg',leg:null},
+};
+const gibsUrl=(k,d)=>`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${GIBS[k].l}/default/${d}/${GIBS[k].m}/{z}/{y}/{x}.${GIBS[k].ext||'png'}`;
+
+const BASES = {
+  esri:{tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],attr:'Esri, Maxar, Earthstar Geographics',max:19},
+  s2:{tiles:['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg'],attr:'Sentinel-2 cloudless 2021 by EOX (CC BY-NC-SA 4.0), Copernicus',max:15},
+  osm:{tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],attr:'© OpenStreetMap contributors',max:19},
+};
+
+const DEM = {type:'raster-dem',tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+  encoding:'terrarium',tileSize:256,maxzoom:14,attribution:'Terreno: Mapzen/AWS Terrain Tiles (SRTM, otros)'};
+
+const map = new maplibregl.Map({
+  container:'map',
+  center:[-75.575,6.25], zoom:10.6, pitch:62, bearing:-20, maxPitch:85,
+  style:{version:8,glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources:{
+      base:{type:'raster',tiles:BASES.esri.tiles,tileSize:256,maxzoom:19,attribution:BASES.esri.attr},
+      dem:DEM, demHill:DEM,
+    },
+    layers:[
+      {id:'base',type:'raster',source:'base'},
+      {id:'hill',type:'hillshade',source:'demHill',paint:{'hillshade-exaggeration':0.45,'hillshade-shadow-color':'#000'}},
+    ],
+    terrain:{source:'dem',exaggeration:1.6},
+    sky:{}
+  }
+});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
+map.addControl(new maplibregl.ScaleControl({unit:'metric'}),'bottom-left');
+map.addControl(new maplibregl.FullscreenControl(),'top-right');
+
+const $=id=>document.getElementById(id);
+function beforeId(){return map.getLayer('rivers')?'rivers':(map.getLayer('complaints')?'complaints':undefined)}
+
+map.on('load',()=>{
+  try{map.setSky({'sky-color':'#6aa6d8','horizon-color':'#cfe3f2','fog-color':'#dfe9f0','sky-horizon-blend':0.5,'horizon-fog-blend':0.6,'fog-ground-blend':0.4})}catch(e){}
+
+  // Límite aproximado del Valle de Aburrá (10 municipios)
+  map.addSource('aoi',{type:'geojson',data:{type:'Feature',geometry:{type:'Polygon',coordinates:[[
+    [-75.705,6.120],[-75.660,6.040],[-75.590,6.000],[-75.540,6.040],[-75.530,6.120],[-75.505,6.200],
+    [-75.480,6.300],[-75.420,6.390],[-75.350,6.480],[-75.380,6.560],[-75.470,6.540],[-75.540,6.440],
+    [-75.620,6.380],[-75.680,6.330],[-75.720,6.250],[-75.705,6.120]]]}}});
+  map.addLayer({id:'aoi',type:'line',source:'aoi',paint:{'line-color':'#ffd54f','line-width':2,'line-dasharray':[3,2],'line-opacity':.8}});
+
+  // Hidrología
+  map.addSource('hydro',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'water',type:'fill',source:'hydro',filter:['==',['geometry-type'],'Polygon'],paint:{'fill-color':'#2196f3','fill-opacity':.55}});
+  map.addLayer({id:'rivers',type:'line',source:'hydro',filter:['==',['geometry-type'],'LineString'],
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':['match',['get','waterway'],'river','#29b6f6','#81d4fa'],
+      'line-width':['interpolate',['linear'],['zoom'],9,['match',['get','waterway'],'river',2,.6],15,['match',['get','waterway'],'river',6,2.5]]}});
+  map.addLayer({id:'river-labels',type:'symbol',source:'hydro',filter:['all',['==',['geometry-type'],'LineString'],['has','name']],minzoom:12,
+    layout:{'symbol-placement':'line','text-field':['get','name'],'text-font':['Open Sans Regular'],'text-size':11},
+    paint:{'text-color':'#e1f5fe','text-halo-color':'#01579b','text-halo-width':1.2}});
+  loadHydro();
+
+  // Denuncias
+  map.addSource('cmp',{type:'geojson',data:complaintsGeoJSON()});
+  map.addLayer({id:'complaints-halo',type:'circle',source:'cmp',paint:{'circle-radius':13,'circle-color':catColorExpr(),'circle-opacity':.25}});
+  map.addLayer({id:'complaints',type:'circle',source:'cmp',paint:{'circle-radius':7,'circle-color':catColorExpr(),'circle-stroke-color':'#fff','circle-stroke-width':1.5}});
+  map.addLayer({id:'complaints-lbl',type:'symbol',source:'cmp',minzoom:12.5,
+    layout:{'text-field':['get','desc'],'text-font':['Open Sans Regular'],'text-size':11,'text-offset':[0,1.4],'text-anchor':'top','text-max-width':12},
+    paint:{'text-color':'#fff','text-halo-color':'#000','text-halo-width':1.3}});
+  applyCatFilter();
+
+  map.on('click','complaints',e=>{
+    const p=e.features[0].properties;
+    new maplibregl.Popup().setLngLat(e.lngLat).setHTML(
+      `<b style="color:${CATS[p.cat].c}">● ${CATS[p.cat].n}</b><br><b>${esc(p.lugar)}</b><br>${esc(p.desc)}<br><span style="color:#9fb0c0;font-size:11px">${esc(p.fuente)}</span>`).addTo(map);
+  });
+  map.on('mouseenter','complaints',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','complaints',()=>map.getCanvas().style.cursor='');
+});
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function catColorExpr(){const e=['match',['get','cat']];for(const k in CATS)e.push(k,CATS[k].c);e.push('#fff');return e}
+
+// --- Hidrología desde OpenStreetMap (Overpass) ---
+async function loadHydro(){
+  const bbox='5.98,-75.75,6.58,-75.32';
+  const q=`[out:json][timeout:60];(way["waterway"~"river|stream"](${bbox});way["natural"="water"](${bbox});relation["natural"="water"](${bbox}););out geom;`;
+  const eps=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+  for(const ep of eps){
+    try{
+      const r=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q)});
+      if(!r.ok) throw new Error(r.status);
+      const j=await r.json();
+      const feats=[];
+      for(const el of j.elements){
+        if(el.type==='way'&&el.geometry){
+          const c=el.geometry.map(g=>[g.lon,g.lat]);
+          const isPoly=el.tags&&el.tags.natural==='water'&&c.length>3;
+          feats.push({type:'Feature',properties:{...el.tags},geometry:isPoly?{type:'Polygon',coordinates:[c]}:{type:'LineString',coordinates:c}});
+        }else if(el.type==='relation'&&el.members){
+          el.members.filter(m=>m.role==='outer'&&m.geometry).forEach(m=>{
+            const c=m.geometry.map(g=>[g.lon,g.lat]);
+            if(c.length>3&&c[0][0]===c[c.length-1][0]&&c[0][1]===c[c.length-1][1])
+              feats.push({type:'Feature',properties:{...el.tags},geometry:{type:'Polygon',coordinates:[c]}});
+          });
+        }
+      }
+      map.getSource('hydro').setData({type:'FeatureCollection',features:feats});
+      const nr=feats.filter(f=>f.geometry.type==='LineString').length;
+      $('status').textContent=`${nr} tramos de drenaje y ${feats.length-nr} cuerpos de agua (OSM vía Overpass).`;
+      return;
+    }catch(e){console.warn('Overpass',ep,e)}
+  }
+  $('status').textContent='No fue posible descargar la hidrología (Overpass no disponible). Reintenta más tarde.';
+}
+
+// --- Controles relieve ---
+$('terrain').onchange=e=>map.setTerrain(e.target.checked?{source:'dem',exaggeration:+$('exag').value}:null);
+$('exag').oninput=e=>{$('exagv').textContent=(+e.target.value).toFixed(1)+'×';if($('terrain').checked)map.setTerrain({source:'dem',exaggeration:+e.target.value})};
+$('hill').onchange=e=>map.setLayoutProperty('hill','visibility',e.target.checked?'visible':'none');
+$('v3d').onclick=()=>map.easeTo({pitch:62,bearing:-20,duration:1200});
+$('v2d').onclick=()=>map.easeTo({pitch:0,bearing:0,duration:1200});
+let spinning=false;
+$('spin').onclick=()=>{spinning=!spinning;$('spin').textContent=spinning?'Detener':'Rotar';if(spinning)rot()};
+function rot(){if(!spinning)return;map.easeTo({bearing:map.getBearing()+30,duration:4000,easing:t=>t});setTimeout(rot,4000)}
+
+// Curvas de nivel generadas en el navegador a partir del DEM (marching squares sobre teselas terrarium)
+$('contours').onchange=async e=>{
+  if(!e.target.checked){if(map.getLayer('contours'))['contours','contour-lbl'].forEach(l=>map.setLayoutProperty(l,'visibility','none'));return}
+  if(map.getSource('contours')){['contours','contour-lbl'].forEach(l=>map.setLayoutProperty(l,'visibility','visible'));return}
+  $('status').textContent='Generando curvas de nivel desde el DEM…';
+  const gj=await buildContours(11,[-75.75,5.98,-75.32,6.58],100);
+  map.addSource('contours',{type:'geojson',data:gj});
+  map.addLayer({id:'contours',type:'line',source:'contours',paint:{'line-color':['case',['==',['%',['get','ele'],500],0],'#fff3e0','#ffcc80'],'line-width':['case',['==',['%',['get','ele'],500],0],1.4,.6],'line-opacity':.75}},beforeId());
+  map.addLayer({id:'contour-lbl',type:'symbol',source:'contours',filter:['==',['%',['get','ele'],500],0],minzoom:11,
+    layout:{'symbol-placement':'line','text-field':['concat',['to-string',['get','ele']],' m'],'text-font':['Open Sans Regular'],'text-size':10},
+    paint:{'text-color':'#fff3e0','text-halo-color':'#4e342e','text-halo-width':1}});
+  $('status').textContent=`Curvas generadas: ${gj.features.length} segmentos.`;
+};
+function lon2t(l,z){return Math.floor((l+180)/360*2**z)}
+function lat2t(a,z){const r=a*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**z)}
+function t2lon(x,z){return x/2**z*360-180}
+function t2lat(y,z){const n=Math.PI-2*Math.PI*y/2**z;return 180/Math.PI*Math.atan(Math.sinh(n))}
+async function buildContours(z,bb,step){
+  const x0=lon2t(bb[0],z),x1=lon2t(bb[2],z),y0=lat2t(bb[3],z),y1=lat2t(bb[1],z);
+  const S=128, feats=[];
+  const jobs=[];
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)jobs.push([x,y]);
+  await Promise.all(jobs.map(async([tx,ty])=>{
+    try{
+      const img=new Image();img.crossOrigin='anonymous';
+      img.src=`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${tx}/${ty}.png`;
+      await img.decode();
+      const cv=document.createElement('canvas');cv.width=cv.height=S;const cx=cv.getContext('2d');
+      cx.drawImage(img,0,0,S,S);const d=cx.getImageData(0,0,S,S).data;
+      const H=new Float32Array(S*S);
+      for(let i=0;i<S*S;i++)H[i]=d[i*4]*256+d[i*4+1]+d[i*4+2]/256-32768;
+      const P=(px,py)=>[t2lon(tx+px/(S-1),z),t2lat(ty+py/(S-1),z)];
+      let mn=1e9,mx=-1e9;for(const h of H){if(h<mn)mn=h;if(h>mx)mx=h}
+      for(let lv=Math.ceil(mn/step)*step;lv<=mx;lv+=step){
+        for(let j=0;j<S-1;j++)for(let i=0;i<S-1;i++){
+          const a=H[j*S+i],b=H[j*S+i+1],c=H[(j+1)*S+i+1],dd=H[(j+1)*S+i];
+          const pts=[];
+          const ed=(h1,h2,p1,p2)=>{if((h1<lv)!==(h2<lv)){const t=(lv-h1)/(h2-h1);pts.push([p1[0]+t*(p2[0]-p1[0]),p1[1]+t*(p2[1]-p1[1])])}};
+          ed(a,b,[i,j],[i+1,j]);ed(b,c,[i+1,j],[i+1,j+1]);ed(c,dd,[i+1,j+1],[i,j+1]);ed(dd,a,[i,j+1],[i,j]);
+          for(let k=0;k+1<pts.length;k+=2)feats.push({type:'Feature',properties:{ele:lv},geometry:{type:'LineString',coordinates:[P(...pts[k]),P(...pts[k+1])]}});
+        }
+      }
+    }catch(e){console.warn('DEM tile',tx,ty,e)}
+  }));
+  return {type:'FeatureCollection',features:feats};
+}
+
+// --- Mapa base ---
+$('base').onchange=e=>{
+  const b=BASES[e.target.value];
+  const layers=map.getStyle().layers.map(l=>l.id);const next=layers[layers.indexOf('base')+1];
+  map.removeLayer('base');map.removeSource('base');
+  map.addSource('base',{type:'raster',tiles:b.tiles,tileSize:256,maxzoom:b.max,attribution:b.attr});
+  map.addLayer({id:'base',type:'raster',source:'base'},next);
+};
+
+// --- Índices espectrales ---
+const dd=new Date(Date.now()-20*864e5);$('date').value=dd.toISOString().slice(0,10);
+function setIndex(){
+  const k=$('index').value;
+  if(map.getLayer('idx')){map.removeLayer('idx');map.removeSource('idx')}
+  const lg=$('legend');
+  if(!k){lg.style.display='none';return}
+  const g=GIBS[k];
+  map.addSource('idx',{type:'raster',tiles:[gibsUrl(k,$('date').value)],tileSize:256,maxzoom:g.z,attribution:'NASA EOSDIS GIBS'});
+  map.addLayer({id:'idx',type:'raster',source:'idx',paint:{'raster-opacity':+$('op').value,'raster-resampling':'nearest'}},map.getLayer('aoi')?'aoi':undefined);
+  if(g.leg){lg.style.display='block';lg.innerHTML=`<b>${g.leg[0]}</b><div class="ramp" style="background:${g.leg[1]}"></div><div style="display:flex;justify-content:space-between;font-size:11px;color:#9fb0c0"><span>${g.leg[2]}</span><span>${g.leg[3]}</span><span>${g.leg[4]}</span></div><div style="font-size:10px;color:#9fb0c0;margin-top:3px">${$('date').value} · NASA GIBS</div>`}
+  else lg.style.display='none';
+}
+$('index').onchange=setIndex;$('date').onchange=setIndex;
+$('op').oninput=e=>map.getLayer('idx')&&map.setPaintProperty('idx','raster-opacity',+e.target.value);
+
+// --- Composiciones espectrales y índices (Esri Sentinel-2 / Landsat ImageServer) ---
+const SPEC = {
+  s2:{url:'https://sentinel.arcgis.com/arcgis/rest/services/Sentinel2/ImageServer',attr:'Sentinel-2 L2A · Copernicus / Esri',fns:[
+    ['','— Ninguna —',''],
+    ['Natural Color with DRA','Color natural (B4-B3-B2)','Referencia visual.'],
+    ['Color Infrared with DRA','Falso color infrarrojo (B8-B4-B3)','Vegetación sana en rojo intenso; urbano en cian/gris; suelo desnudo en tonos claros.'],
+    ['Agriculture with DRA','Agricultura (B11-B8-B2)','Vegetación vigorosa verde brillante, estresada verde opaco, suelo desnudo marrón.'],
+    ['Short-wave Infrared with DRA','Infrarrojo onda corta (B12-B11-B4)','Resalta suelos expuestos, cicatrices de tala y humedad.'],
+    ['NDVI Colormap','NDVI (índice de vegetación)','Verde = vegetación densa; amarillo/marrón = poca o nula vegetación.'],
+    ['NDMI Colorized','NDMI (humedad de la vegetación)','Azul = vegetación húmeda; rojo/marrón = estrés hídrico o suelo seco.'],
+    ['Normalized Burn Ratio','NBR (áreas quemadas / taladas)','Valores bajos señalan quemas o remoción de cobertura.'],
+    ['Normalized Difference Built-Up Index (NDBI)','NDBI (áreas construidas)','Muestra la expansión urbana sobre la cobertura vegetal.'],
+  ]},
+  ls:{url:'https://landsat2.arcgis.com/arcgis/rest/services/Landsat/MS/ImageServer',attr:'Landsat · USGS / Esri',fns:[
+    ['','— Ninguna —',''],
+    ['Natural Color with DRA','Color natural',''],
+    ['Color Infrared with DRA','Falso color infrarrojo','Vegetación en rojo. Compara años para detectar pérdida de cobertura.'],
+    ['Agriculture with DRA','Agricultura (SWIR-NIR-Azul)','Vegetación verde, suelo desnudo marrón.'],
+    ['Short-wave Infrared with DRA','Infrarrojo onda corta',''],
+    ['NDVI Colorized','NDVI','Mueve el año para ver el cambio de cobertura en el tiempo.'],
+    ['Normalized Difference Moisture Index Colorized','NDMI (humedad)',''],
+    ['Band 10 Surface Temperature in Celsius','Temperatura superficial (°C)','Islas de calor urbano.'],
+  ]},
+};
+function fillSpFn(){
+  const s=SPEC[$('spSrc').value];
+  $('spFn').innerHTML=s.fns.map(f=>`<option value="${f[0]}">${f[1]}</option>`).join('');
+  $('lsYearRow').style.display=$('spSrc').value==='ls'?'flex':'none';
+}
+function setSpec(){
+  if(map.getLayer('spec')){map.removeLayer('spec');map.removeSource('spec')}
+  const src=$('spSrc').value,fn=$('spFn').value,s=SPEC[src];
+  const f=s.fns.find(x=>x[0]===fn);$('spHelp').textContent=f?f[2]:'';
+  if(!fn)return;
+  let q=`bbox={bbox-epsg-3857}&bboxSR=3857&imageSR=3857&size=256,256&format=png32&f=image&renderingRule=${encodeURIComponent(JSON.stringify({rasterFunction:fn}))}`;
+  if(src==='ls'){
+    const y=$('lsYear').value;
+    q+=`&mosaicRule=${encodeURIComponent(JSON.stringify({mosaicMethod:'esriMosaicAttribute',sortField:'AcquisitionDate',sortValue:`${y}/07/01`,ascending:true,where:`CloudCover < 0.3 AND AcquisitionDate >= date '${y}-01-01' AND AcquisitionDate <= date '${y}-12-31'`}))}`;
+  }else{
+    q+=`&mosaicRule=${encodeURIComponent(JSON.stringify({mosaicMethod:'esriMosaicAttribute',sortField:'cloudcover',sortValue:0,ascending:true}))}`;
+  }
+  map.addSource('spec',{type:'raster',tiles:[`${s.url}/exportImage?${q}`],tileSize:256,attribution:s.attr});
+  map.addLayer({id:'spec',type:'raster',source:'spec',paint:{'raster-opacity':+$('spOp').value}},map.getLayer('idx')?'idx':(map.getLayer('aoi')?'aoi':undefined));
+}
+$('spSrc').onchange=()=>{fillSpFn();setSpec()};
+$('spFn').onchange=setSpec;
+$('lsYear').oninput=e=>$('lsYearV').textContent=e.target.value;
+$('lsYear').onchange=setSpec;
+$('spOp').oninput=e=>map.getLayer('spec')&&map.setPaintProperty('spec','raster-opacity',+e.target.value);
+fillSpFn();
+
+// --- Deforestación Hansen GFC ---
+const GFC={tree2000:'tree_alpha',loss:'loss_alpha',gain:'gain_alpha'};
+Object.keys(GFC).forEach(k=>$(k).onchange=e=>{
+  const id='gfc_'+k;
+  if(!e.target.checked){if(map.getLayer(id)){map.removeLayer(id);map.removeSource(id)}return}
+  map.addSource(id,{type:'raster',tiles:[`https://storage.googleapis.com/earthenginepartners-hansen/tiles/gfc_v1.11/${GFC[k]}/{z}/{x}/{y}.png`],tileSize:256,maxzoom:12,attribution:'Hansen/UMD/Google/USGS/NASA'});
+  map.addLayer({id,type:'raster',source:id,paint:{'raster-opacity':.9}},map.getLayer('aoi')?'aoi':undefined);
+});
+
+// --- Hidrología toggles ---
+$('rivers').onchange=e=>['rivers','river-labels'].forEach(l=>map.setLayoutProperty(l,'visibility',e.target.checked?'visible':'none'));
+$('water').onchange=e=>map.setLayoutProperty('water','visibility',e.target.checked?'visible':'none');
+
+// --- Categorías de denuncias ---
+const active=new Set(Object.keys(CATS));
+function counts(){const c={};complaintsGeoJSON().features.forEach(f=>c[f.properties.cat]=(c[f.properties.cat]||0)+1);return c}
+function renderCats(){
+  const c=counts();
+  $('cats').innerHTML=Object.entries(CATS).map(([k,v])=>`<label><input type="checkbox" data-k="${k}" ${active.has(k)?'checked':''}><span class="dot" style="background:${v.c}"></span>${v.n}<span class="cnt">${c[k]||0}</span></label>`).join('');
+  $('cats').querySelectorAll('input').forEach(i=>i.onchange=()=>{i.checked?active.add(i.dataset.k):active.delete(i.dataset.k);applyCatFilter()});
+  $('fcat').innerHTML=Object.entries(CATS).map(([k,v])=>`<option value="${k}">${v.n}</option>`).join('');
+}
+function applyCatFilter(){
+  const f=['in',['get','cat'],['literal',[...active]]];
+  ['complaints','complaints-halo','complaints-lbl'].forEach(l=>map.getLayer(l)&&map.setFilter(l,f));
+}
+$('all').onclick=()=>{Object.keys(CATS).forEach(k=>active.add(k));renderCats();applyCatFilter()};
+$('none').onclick=()=>{active.clear();renderCats();applyCatFilter()};
+renderCats();
+
+// --- Nueva denuncia ---
+let adding=false,pending=null,pmk=null;
+$('add').onclick=()=>{adding=true;map.getCanvas().style.cursor='crosshair';$('add').textContent='Haz clic en el mapa…'};
+map.on('click',e=>{
+  if(!adding)return;
+  adding=false;map.getCanvas().style.cursor='';$('add').textContent='＋ Nueva denuncia (clic en mapa)';
+  pending=[+e.lngLat.lng.toFixed(5),+e.lngLat.lat.toFixed(5)];
+  pmk&&pmk.remove();pmk=new maplibregl.Marker({color:'#ff1744'}).setLngLat(pending).addTo(map);
+  $('form').style.display='block';$('fdesc').focus();
+});
+function closeForm(){$('form').style.display='none';$('fdesc').value='';pmk&&pmk.remove();pending=null}
+$('fcancel').onclick=closeForm;
+$('fsave').onclick=()=>{
+  if(!pending)return;
+  userPts.push({id:'u'+Date.now(),cat:$('fcat').value,desc:$('fdesc').value||'(sin descripción)',coord:pending,fecha:new Date().toISOString().slice(0,10)});
+  saveUser(userPts);map.getSource('cmp').setData(complaintsGeoJSON());renderCats();closeForm();
+};
+</script>
+</body>
+</html>
